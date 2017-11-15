@@ -796,14 +796,6 @@ describe('Test: document controller', () => {
             should(engine.deleteByQuery).be.calledOnce();
             should(engine.deleteByQuery).be.calledWith(request);
 
-            should(kuzzle.notifier.notifyDocumentDelete).be.calledOnce();
-            should(kuzzle.notifier.notifyDocumentDelete).be.calledWith(request, 'responseIds');
-
-            sinon.assert.callOrder(
-              engine.deleteByQuery,
-              kuzzle.notifier.notifyDocumentDelete
-            );
-
             should(response).be.instanceof(Object);
             should(response).match(foo);
 

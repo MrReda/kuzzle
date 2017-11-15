@@ -34,7 +34,7 @@ defineSupportCode(function ({Then}) {
               return false;
             }
 
-            if (!body.result || body.result.ids.length === 0) {
+            if (!body.result || body.result.deleted === 0) {
               callbackAsync('No result provided');
               return false;
             }

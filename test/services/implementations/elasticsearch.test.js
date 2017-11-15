@@ -10,7 +10,6 @@ const
   {
     BadRequestError,
     NotFoundError,
-    KuzzleError,
     PreconditionError
   } = require('kuzzle-common-objects').errors,
   ESClientMock = require('../../mocks/services/elasticsearchClient.mock'),
@@ -782,171 +781,160 @@ describe('Test: ElasticSearch service', () => {
       };
     });
 
-    it('should return an empty result array when no document has been deactivated using a filter', () => {
-      elasticsearch.client.search.yields(null, {hits: {hits: [], total: 0}});
+    it('should update active status for non-trashed docs by default', () => {
+      elasticsearch.client.updateByQuery.returns(Bluebird.resolve({updated: 42}));
 
-      return elasticsearch.deleteByQuery(request)
-        .then(result => {
-          should(elasticsearch.client.search.firstCall.args[0]).not.be.undefined();
-
-          // Ugly line in order to spot a random bug on this unit test
-          should(result.ids).not.be.undefined().and.be.an.Array();
-          should(result.ids.length).be.exactly(0);
-        });
-    });
-
-    it('should allow to deactivate documents using a provided filter', () => {
-      const
-        refreshIndexSpy = sandbox.spy(elasticsearch, 'refreshIndexIfNeeded'),
-        mockupIds = ['foo', 'bar', 'baz'],
-        getAllIdsStub = sinon.stub().returns(Bluebird.resolve(mockupIds));
-
-      elasticsearch.client.bulk.returns(Bluebird.resolve(mockupIds));
-
-      return ES.__with__({
-        getAllIdsFromQuery: getAllIdsStub,
-        Date: {
-          now: () => 42
+      return elasticsearch.deleteByQuery(new Request({
+        controller: 'document',
+        action: 'deleteByQuery',
+        index: 'index',
+        collection: 'collection',
+        body: {
+          query: {
+            term: {foo: 'bar'}
+          }
         }
-      })(() => {
-        return elasticsearch.deleteByQuery(request)
-          .then(result => {
-            const bulkData = elasticsearch.client.bulk.firstCall.args[0];
-
-            // elasticsearch.client.bullk
-            should(bulkData.body).not.be.undefined().and.be.an.Array();
-            // (mockupIds.length * 2) because there is update requests with body
-            should(bulkData.body.length).be.exactly(mockupIds.length * 2);
-
-            bulkData.body.forEach(cmd => {
-              should(cmd).be.an.Object();
-              if (cmd.update) {
-                should(cmd.update).not.be.undefined().and.be.an.Object();
-                should(mockupIds.indexOf(cmd.update._id)).not.be.eql(-1);
-                should(cmd.update._type).be.exactly(request.input.resource.collection);
-              }
-              if (cmd.doc) {
-                should(cmd.doc).not.be.undefined().and.be.an.Object();
-                should(cmd.doc).be.eql({_kuzzle_info: { active: false, deletedAt: 42, updater: 'test' }});
-              }
-            });
-
-            // elasticserach.deleteByQuery
-            should(result.ids).not.be.undefined().and.be.an.Array();
-            should(result.ids).match(mockupIds);
-
-            // refreshIndexIfNeeded
-            should(refreshIndexSpy.calledOnce).be.true();
+      }))
+        .then(response => {
+          should(response).eql({
+            deleted: 42
           });
-      });
-    });
 
-    it('should return a rejected promise if the delete by query fails because of a bad filter', () => {
-      elasticsearch.client.search.yields(new Error(), {});
-
-      return should(elasticsearch.deleteByQuery(request)).be.rejected();
-    });
-
-    it('should return a rejected promise if the delete by query fails because of a bulk failure', () => {
-      const error = new KuzzleError('Mocked error');
-      elasticsearch.client.bulk.returns(Bluebird.reject(error));
-
-      request.input.body.query = {some: 'query'};
-
-      return ES.__with__({
-        getAllIdsFromQuery: () => Bluebird.resolve(['foo', 'bar'])
-      })(() => {
-        return should(elasticsearch.deleteByQuery(request)).be.rejectedWith(error);
-      });
-    });
-
-    it('should return a rejected promise if the delete by query fails because the filter is null', () => {
-      request.input.body.query = null;
-
-      return should(elasticsearch.deleteByQuery(request)).be.rejectedWith(BadRequestError);
-    });
-  });
-
-  describe('#deleteByQueryFromTrash', () => {
-    it('should return an empty result array when no document has been deleted using a filter', () => {
-      elasticsearch.client.search.yields(null, {hits: {hits: [], total: 0}});
-
-      delete request.input.body;
-      request.input.body.query = {term: {firstName: 'no way any document can be returned with this filter'}};
-
-      return elasticsearch.deleteByQueryFromTrash(request)
-        .then(result => {
-          should(elasticsearch.client.search.firstCall.args[0].body.query).be.exactly(request.input.body.query);
-
-          // Ugly line in order to spot a random bug on this unit test
-          should(result.ids).not.be.undefined().and.be.an.Array();
-          should(result.ids.length).be.exactly(0);
+          should(elasticsearch.client.updateByQuery)
+            .be.calledOnce()
+            .be.calledWithMatch({
+              index: 'index',
+              type: 'collection',
+              conflicts: 'abort',
+              body: {
+                query: {
+                  bool: {
+                    must: {
+                      term: {foo: 'bar'}
+                    },
+                    filter: {
+                      bool: {
+                        must_not: {term: {'_kuzzle_info.active': false}}
+                      }
+                    }
+                  }
+                },
+                script: {
+                  lang: 'painless',
+                  stored: '_kuzzle_info_delete'
+                }
+              }
+            });
         });
     });
 
-    it('should allow to delete inactive documents using a provided filter from the trash', () => {
-      const
-        refreshIndexSpy = sandbox.spy(elasticsearch, 'refreshIndexIfNeeded'),
-        mockupIds = ['foo', 'bar', 'baz'],
-        getAllIdsStub = sinon.stub().returns(Bluebird.resolve(mockupIds));
+    it('should include trash documents if asked (even if it does not make sense)', () => {
+      elasticsearch.client.updateByQuery.returns(Bluebird.resolve({updated: 42}));
 
-      elasticsearch.client.bulk.returns(Bluebird.resolve(mockupIds));
-      elasticsearch.client.search.yields(null, {hits: {hits: [{_id: 'foo'}, {_id: 'bar'}, {_id: 'baz'}], total: mockupIds.length}});
+      return elasticsearch.deleteByQuery(new Request({
+        controller: 'document',
+        action: 'deleteByQuery',
+        index: 'index',
+        collection: 'collection',
+        body: {
+          query: {
+            term: {foo: 'bar'}
+          }
+        },
+        includeTrash: true
+      }))
+        .then(response => {
+          should(response).eql({deleted: 42});
 
-      return ES.__with__({
-        getAllIdsFromQuery: getAllIdsStub,
-        Date: {
-          now: () => 42
-        }
-      })(() => {
-        return should(elasticsearch.deleteByQueryFromTrash(request)
-          .then(result => {
-            const bulkData = elasticsearch.client.bulk.firstCall.args[0];
-
-            // elasticsearch.client.bulk
-            should(bulkData.body).not.be.undefined().and.be.an.Array();
-            should(bulkData.body.length).be.exactly(mockupIds.length);
-
-            bulkData.body.forEach(cmd => {
-              should(cmd).be.an.Object();
-              should(cmd.delete).not.be.undefined().and.be.an.Object();
-              should(mockupIds.indexOf(cmd.delete._id)).not.be.eql(-1);
-              should(cmd.delete._type).be.exactly(request.input.resource.collection);
+          should(elasticsearch.client.updateByQuery)
+            .be.calledOnce()
+            .be.calledWithMatch({
+              index: 'index',
+              type: 'collection',
+              conflicts: 'abort',
+              body: {
+                query: {
+                  term: {foo: 'bar'}
+                },
+                script: {
+                  stored: '_kuzzle_info_delete',
+                  lang: 'painless'
+                }
+              }
             });
-
-            // elasticserach.deleteByQuery
-            should(result.ids).not.be.undefined().and.be.an.Array();
-            should(result.ids).match(mockupIds);
-
-            // refreshIndexIfNeeded
-            should(refreshIndexSpy.calledOnce).be.true();
-          }));
-      });
+        });
     });
 
-    it('should return a rejected promise if the delete by query fails because of a bad filter', () => {
-      elasticsearch.client.search.yields(new Error(), {});
+    it('should delete docs  from es if asked to', () => {
+      elasticsearch.client.deleteByQuery.returns(Bluebird.resolve({deleted: 42}));
 
-      return should(elasticsearch.deleteByQuery(request)).be.rejected();
+      return elasticsearch.deleteByQuery(new Request({
+        controller: 'document',
+        action: 'deleteByQuery',
+        index: 'index',
+        collection: 'collection',
+        bypassTrash: true,
+        body: {
+          query: {
+            term: {foo: 'bar'}
+          }
+        }
+      }))
+        .then(response => {
+          should(response).eql({deleted: 42});
+
+          should(elasticsearch.client.deleteByQuery)
+            .be.calledOnce()
+            .be.calledWith({
+              index: 'index',
+              type: 'collection',
+              body: {
+                query: {
+                  bool: {
+                    must: {term: {foo: 'bar'}},
+                    filter: {
+                      bool: {
+                        must_not: {term: {'_kuzzle_info.active': false}}
+                      }
+                    }
+                  }
+                }
+              }
+            });
+        });
     });
 
-    it('should reject the promise if the delete by query fails because of a bulk failure', () => {
-      const error = new KuzzleError('Mocked error');
-      elasticsearch.client.bulk.returns(Bluebird.reject(error));
+    it('should delete docs including trash if asked to', () => {
+      elasticsearch.client.deleteByQuery.returns(Bluebird.resolve({deleted: 42}));
 
-      request.input.body.query = {some: 'query'};
+      return elasticsearch.deleteByQuery(new Request({
+        controller: 'document',
+        action: 'deleteByQuery',
+        index: 'index',
+        collection: 'collection',
+        body: {
+          query: {
+            term: {foo: 'bar'}
+          }
+        },
+        includeTrash: true,
+        bypassTrash: true
+      }))
+        .then(response => {
+          should(response).eql({deleted: 42});
 
-      return ES.__with__({
-        getAllIdsFromQuery: () => Bluebird.resolve(['foo', 'bar'])
-      })(() => {
-        return should(elasticsearch.deleteByQuery(request)).be.rejectedWith(error);
-      });
-    });
-
-    it('should return a rejected promise if the delete by query fails because the filter is null', () => {
-      request.input.body.query = null;
-
-      return should(elasticsearch.deleteByQuery(request)).be.rejectedWith(BadRequestError);
+          should(elasticsearch.client.deleteByQuery)
+            .be.calledOnce()
+            .be.calledWith({
+              index: 'index',
+              type: 'collection',
+              body: {
+                query: {
+                  term: {foo: 'bar'}
+                }
+              }
+            });
+        });
     });
   });
 
@@ -1242,59 +1230,6 @@ describe('Test: ElasticSearch service', () => {
             .be.calledOnce()
             .be.calledWithExactly({ index: 'test', type: 'unit-tests-elasticsearch'});
           should(res).match({foo: 'bar'});
-        });
-    });
-  });
-
-  describe('#getAllIdsFromQuery', () => {
-    it('should be able to get every ids matching a query', () => {
-      const
-        getAllIdsFromQuery = ES.__get__('getAllIdsFromQuery'),
-        ids = ['foo', 'bar'];
-
-      elasticsearch.client.search.yields(null, {
-        hits: {
-          hits: [{_id: 'foo'}, {_id: 'bar'}],
-          total: 2
-        }
-      });
-
-      return getAllIdsFromQuery(elasticsearch.client, request)
-        .then(result => {
-          should(result).be.an.Array().and.match(ids);
-          should(result.length).be.exactly(2);
-        });
-    });
-
-    it('should return a rejected promise if the search fails', () => {
-      const getAllIdsFromQuery = ES.__get__('getAllIdsFromQuery');
-
-      elasticsearch.client.search.yields(new Error('rejected'));
-      return should(getAllIdsFromQuery(elasticsearch.client, request)).be.rejectedWith('rejected');
-    });
-
-    it('should scroll through result pages until getting all ids', () => {
-      const
-        getAllIdsFromQuery = ES.__get__('getAllIdsFromQuery'),
-        ids = ['foo', 'bar'];
-
-      elasticsearch.client.search.yields(null, {
-        hits: {
-          hits: [{_id: 'foo'}],
-          total: 2
-        }
-      });
-      elasticsearch.client.scroll.yields(null, {
-        hits: {
-          hits: [ {_id: 'bar'} ],
-          total: 2
-        }
-      });
-
-      return getAllIdsFromQuery(elasticsearch.client, request)
-        .then(result => {
-          should(result).be.an.Array().and.match(ids);
-          should(result.length).be.exactly(2);
         });
     });
   });

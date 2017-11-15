@@ -69,10 +69,10 @@ describe('Test: GarbageCollector service', () => {
     });
 
     it('should clean all collections in all indexes', () => {
-      kuzzle.services.list.storageEngine.deleteByQueryFromTrash
-        .onFirstCall().resolves({ids: ['document1-1-1', 'document1-1-2']})
-        .onSecondCall().resolves({ids: ['document2-1-1']})
-        .onThirdCall().resolves({ids: ['document2-2-1','document2-2-2', 'document2-2-3']});
+      kuzzle.services.list.storageEngine.deleteByQuery
+        .onFirstCall().resolves({deleted: 3})
+        .onSecondCall().resolves({deleted: 1})
+        .onThirdCall().resolves({deleted: 5});
 
       kuzzle.indexCache.indexes = {
         foo: ['bar'],
@@ -81,27 +81,19 @@ describe('Test: GarbageCollector service', () => {
       };
 
       return gc.run()
-        .then(ids => {
-          should(ids)
-            .be.eql({ids: [
-              'document1-1-1',
-              'document1-1-2',
-              'document2-1-1',
-              'document2-2-1',
-              'document2-2-2',
-              'document2-2-3'
-            ]});
+        .then(response => {
+          should(response).eql({deleted: 9});
         });
     });
 
     it('should skip collections if kuzzle becomes overloaded during the process', () => {
-      kuzzle.services.list.storageEngine.deleteByQueryFromTrash
-        .onFirstCall().resolves({ids: ['document1-1-1', 'document1-1-2']})
+      kuzzle.services.list.storageEngine.deleteByQuery
+        .onFirstCall().resolves({deleted: 3})
         .onSecondCall().callsFake(() => {
           kuzzle.funnel.overloaded = true;
-          return Bluebird.resolve({ids: ['document2-1-1']});
+          return Bluebird.resolve({deleted: 1});
         })
-        .onThirdCall().resolves({ids: ['document2-2-1','document2-2-2', 'document2-2-3']});
+        .onThirdCall().resolves({deleted: 5});
 
       kuzzle.indexCache.indexes = {
         foo: ['bar'],
@@ -110,23 +102,18 @@ describe('Test: GarbageCollector service', () => {
       };
 
       return gc.run()
-        .then(ids => {
-          should(ids)
-            .be.eql({ids: [
-              'document1-1-1',
-              'document1-1-2',
-              'document2-1-1'
-            ]});
+        .then(response => {
+          should(response).eql({deleted: 4});
         });
     });
 
     it('should discard errors', () => {
       const error = new Error('mocked error');
 
-      kuzzle.services.list.storageEngine.deleteByQueryFromTrash
+      kuzzle.services.list.storageEngine.deleteByQuery
         .onFirstCall().rejects(error)
-        .onSecondCall().resolves({ids: ['document2-1-1']})
-        .onThirdCall().resolves({ids: ['document2-2-1','document2-2-2', 'document2-2-3']});
+        .onSecondCall().resolves({deleted: 1})
+        .onThirdCall().resolves({deleted: 5});
 
       kuzzle.indexCache.indexes = {
         foo: ['bar'],
@@ -135,16 +122,8 @@ describe('Test: GarbageCollector service', () => {
       };
 
       return gc.run()
-        .then(ids => {
-          should(kuzzle.pluginsManager.trigger).be.calledWith('log:error', error);
-
-          should(ids)
-            .be.eql({ids: [
-              'document2-1-1',
-              'document2-2-1',
-              'document2-2-2',
-              'document2-2-3'
-            ]});
+        .then(response => {
+          should(response).eql({deleted: 6});
         });
     });
 
@@ -152,7 +131,7 @@ describe('Test: GarbageCollector service', () => {
       return gc.run()
         .then(() => {
           should(kuzzle.pluginsManager.trigger).be.calledWith('gc:start');
-          should(kuzzle.pluginsManager.trigger).be.calledWith('gc:end', {ids: []});
+          should(kuzzle.pluginsManager.trigger).be.calledWith('gc:end', {deleted: 0});
         });
     });
 

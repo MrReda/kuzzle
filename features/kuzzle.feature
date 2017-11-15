@@ -237,17 +237,6 @@ Feature: Kuzzle functional tests
     And The notification should have volatile
 
   @realtime
-  Scenario: Delete a document with a query
-    Given A room subscription listening to "info.city" having value "NYC"
-    When I write the document "documentGrace"
-    And I write the document "documentAda"
-    And I refresh the index
-    Then I remove documents with field "info.hobby" equals to value "computer"
-    Then I should receive a document notification with field action equal to "delete"
-    And The notification should not have a "_source" member
-    And The notification should have volatile
-
-  @realtime
   Scenario: Count how many subscription on a room
     Given A room subscription listening to "lastName" having value "Hopper" with socket "client1"
     Given A room subscription listening to "lastName" having value "Hopper" with socket "client2"
